@@ -44,7 +44,7 @@ async def addcard(
     price: int = SlashOption(description="Price of the card"),
     position: str = SlashOption(description="Position of the player")
 ):
-    async with aiosqlite.connect('soccer_cards.db') as db:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute('''
                 INSERT INTO cards (name, pace, shot, passing, dribbling, defending, physical, image_url, price, position)
@@ -59,7 +59,7 @@ async def addcard(
 async def claim(interaction: Interaction):
     user_id = str(interaction.user.id)
 
-    async with aiosqlite.connect('soccer_cards.db') as db:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             async with db.execute('''
                 SELECT card_id, name, pace, shot, passing, dribbling, defending, physical, image_url, price 
@@ -75,11 +75,11 @@ async def claim(interaction: Interaction):
             selected_card = random.choice(available_cards)
             card_id, card_name, pace, shot, passing, dribbling, defending, physical, image_url, card_price = selected_card
 
-            view = View()
+            view = nextcord.ui.View()
 
             async def claim_card(interaction: Interaction):
                 try:
-                    async with aiosqlite.connect('soccer_cards.db') as db:
+                    async with aiosqlite.connect(DATABASE_PATH) as db:
                         await db.execute('INSERT INTO user_collections (user_id, card_id) VALUES (?, ?)', (user_id, card_id))
                         await db.commit()
                     await interaction.response.edit_message(content=f"You've claimed the card '{card_name}'!", view=None)
@@ -88,7 +88,7 @@ async def claim(interaction: Interaction):
 
             async def sell_card(interaction: Interaction):
                 try:
-                    async with aiosqlite.connect('soccer_cards.db') as db:
+                    async with aiosqlite.connect(DATABASE_PATH) as db:
                         await db.execute('''
                             INSERT INTO user_balances (user_id, balance)
                             VALUES (?, ?)
@@ -99,30 +99,21 @@ async def claim(interaction: Interaction):
                 except Exception as e:
                     await interaction.response.edit_message(content=f"An error occurred: {e}", view=None)
 
-            claim_button = Button(label="Claim", style=nextcord.ButtonStyle.green)
+            claim_button = nextcord.ui.Button(label="Claim", style=nextcord.ButtonStyle.green)
             claim_button.callback = claim_card
 
-            sell_button = Button(label="Sell", style=nextcord.ButtonStyle.red)
+            sell_button = nextcord.ui.Button(label="Sell", style=nextcord.ButtonStyle.red)
             sell_button.callback = sell_card
 
             view.add_item(claim_button)
             view.add_item(sell_button)
-
+            sell_price = int(card_price * 0.8)
             embed = nextcord.Embed(
-                title="Card Available",
-                description=(
-                    f"**Name:** {card_name}\n"
-                    f"**Pace:** {pace}\n"
-                    f"**Shot:** {shot}\n"
-                    f"**Passing:** {passing}\n"
-                    f"**Dribbling:** {dribbling}\n"
-                    f"**Defending:** {defending}\n"
-                    f"**Physical:** {physical}\n"
-                    f"**Price:** {card_price} coins"
-                ),
+                title=f"{card_name} joins your club",
+                description=(f'**Value:** {card_price} coins\n **Sells for:** {sell_price}'),
                 color=nextcord.Color.blue()
             )
-            embed.set_thumbnail(url=image_url)
+            embed.set_image(url=image_url)
 
             await interaction.response.send_message(embed=embed, view=view)
         except Exception as e:
@@ -139,39 +130,17 @@ async def download_image(url: str) -> bytes:
             else:
                 raise Exception(f"Failed to download image, status code: {response.status}")
 
-
-
-async def upload_image(image_data: bytes) -> str:
-    async with aiohttp.ClientSession() as session:
-        upload_url = 'https://api.imgur.com/3/image'  # Replace with actual URL
-        headers = {'Authorization': 'Bearer YOUR_ACCESS_TOKEN'}  # Replace with actual token
-        data = aiohttp.FormData()
-        data.add_field('image', image_data, content_type='image/png', filename='lineup.png')
-
-        async with session.post(upload_url, headers=headers, data=data) as response:
-            if response.status == 200:
-                result = await response.json()
-                return result['data']['link']
-            else:
-                raise Exception(f"Failed to upload image, status code: {response.status}")
-
-import io
-import aiosqlite
-from PIL import Image, ImageDraw, ImageFont
-import nextcord
-from nextcord import Interaction
-
 @client.slash_command(name="lineup", description="View your card collection in a lineup image.", guild_ids=[guild_id])
 async def lineup(interaction: Interaction):
     await interaction.response.defer()
 
     user_id = str(interaction.user.id)
 
-    async with aiosqlite.connect('soccer_cards.db') as db:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             async with db.execute('''
                 SELECT cards.name, cards.pace, cards.shot, cards.passing, cards.dribbling, 
-                       cards.defending, cards.physical, cards.image_url, cards.position, cards.price
+                       cards.defending, cards.physical, cards.image_url, cards.position
                 FROM cards 
                 INNER JOIN user_collections ON cards.card_id = user_collections.card_id 
                 WHERE user_collections.user_id = ?
@@ -183,7 +152,6 @@ async def lineup(interaction: Interaction):
                 return
 
             background_url = "https://cdn.discordapp.com/attachments/1273397560106680421/1274038333101838482/https___cdn.png?ex=66c0cc29&is=66bf7aa9&hm=3391562c99b95da428137ed057d2a29d756512e2ab3734e86cc61b5a6c8accf4&"
-
             try:
                 background_image_data = await download_image(background_url)
                 background_image = Image.open(io.BytesIO(background_image_data))
@@ -216,7 +184,7 @@ async def lineup(interaction: Interaction):
 
             for card in cards:
                 try:
-                    name, pace, shot, passing, dribbling, defending, physical, image_url, position, price = card
+                    name, pace, shot, passing, dribbling, defending, physical, image_url, position = card
                     coords = position_coords.get(position, (0, 0))
 
                     card_image_data = await download_image(image_url)
@@ -226,8 +194,6 @@ async def lineup(interaction: Interaction):
                 except Exception as e:
                     print(f"Error processing card {card}: {e}")
                     continue
-
-
 
             embed = nextcord.Embed(
                 description=f"# Lineup"
@@ -475,3 +441,161 @@ async def view_cards(interaction: Interaction):
 
         except Exception as e:
             await interaction.followup.send(f"An error occurred: {e}")
+
+
+@client.slash_command(name="club", description="Shows all players you have in your collection.", guild_ids=[guild_id])
+async def club(interaction: Interaction):
+    user_id = str(interaction.user.id)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            async with db.execute('''
+                SELECT cards.name, cards.pace, cards.shot, cards.passing, cards.dribbling, 
+                       cards.defending, cards.physical, cards.image_url, cards.position
+                FROM cards 
+                INNER JOIN user_collections ON cards.card_id = user_collections.card_id 
+                WHERE user_collections.user_id = ?
+            ''', (user_id,)) as cursor:
+                cards = await cursor.fetchall()
+
+            if not cards:
+                await interaction.response.send_message("You don't have any cards yet.")
+                return
+
+            card_list = "\n".join([f"{name} - Position: {position}" for name, _, _, _, _, _, _, _, position in cards])
+            await interaction.response.send_message(f"Your club:\n{card_list}")
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}")
+
+@client.slash_command(name="7show", description="Shows your current lineup.", guild_ids=[guild_id])
+async def show_lineup(interaction: Interaction):
+    user_id = str(interaction.user.id)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            async with db.execute('''
+                SELECT cards.name, cards.position
+                FROM cards 
+                INNER JOIN user_collections ON cards.card_id = user_collections.card_id 
+                WHERE user_collections.user_id = ?
+                ORDER BY cards.position
+            ''', (user_id,)) as cursor:
+                lineup = await cursor.fetchall()
+
+            if not lineup:
+                await interaction.response.send_message("Your lineup is empty.")
+                return
+
+            lineup_list = "\n".join([f"{name} - Position: {position}" for name, position in lineup])
+            await interaction.response.send_message(f"Your lineup:\n{lineup_list}")
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}")
+
+@client.slash_command(name="7add", description="Add a player to your lineup from your club.", guild_ids=[guild_id])
+async def add_player_to_lineup(interaction: Interaction, player_name: str):
+    user_id = str(interaction.user.id)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            # Check if player exists in user's collection
+            async with db.execute('''
+                SELECT card_id, position
+                FROM cards 
+                INNER JOIN user_collections ON cards.card_id = user_collections.card_id
+                WHERE user_collections.user_id = ? AND cards.name = ?
+            ''', (user_id, player_name)) as cursor:
+                result = await cursor.fetchone()
+
+            if not result:
+                await interaction.response.send_message(f"You don't own a card with the name '{player_name}'.")
+                return
+
+            card_id, current_position = result
+
+            # Check if player is already in the lineup
+            async with db.execute('''
+                SELECT 1 FROM lineup WHERE user_id = ? AND card_id = ?
+            ''', (user_id, card_id)) as cursor:
+                if await cursor.fetchone():
+                    await interaction.response.send_message(f"Player '{player_name}' is already in your lineup.")
+                    return
+
+            # Add player to lineup at a vacant position
+            positions = ['ST', 'CAM', 'GK', 'LW', 'RW', 'RCM', 'LFC']
+            for pos in positions:
+                async with db.execute('''
+                    SELECT 1 FROM lineup WHERE user_id = ? AND position = ?
+                ''', (user_id, pos)) as cursor:
+                    if not await cursor.fetchone():
+                        async with db.execute('''
+                            INSERT INTO lineup (user_id, card_id, position)
+                            VALUES (?, ?, ?)
+                        ''', (user_id, card_id, pos)):
+                            await db.commit()
+                        await interaction.response.send_message(f"Player '{player_name}' added to position '{pos}'.")
+                        return
+
+            await interaction.response.send_message("No vacant positions available in the lineup.")
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}")
+
+@client.slash_command(name="7remove", description="Remove a player from your lineup.", guild_ids=[guild_id])
+async def remove_player_from_lineup(interaction: Interaction, player_name: str):
+    user_id = str(interaction.user.id)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            async with db.execute('''
+                SELECT card_id FROM cards 
+                INNER JOIN user_collections ON cards.card_id = user_collections.card_id
+                WHERE user_collections.user_id = ? AND cards.name = ?
+            ''', (user_id, player_name)) as cursor:
+                result = await cursor.fetchone()
+
+            if not result:
+                await interaction.response.send_message(f"You don't own a card with the name '{player_name}'.")
+                return
+
+            card_id = result[0]
+
+            async with db.execute('''
+                DELETE FROM lineup WHERE user_id = ? AND card_id = ?
+            ''', (user_id, card_id)):
+                await db.commit()
+
+            await interaction.response.send_message(f"Player '{player_name}' removed from your lineup.")
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}")
+
+@client.slash_command(name="switch", description="Switch a player's position with another position.", guild_ids=[guild_id])
+async def switch_player_position(interaction: Interaction, current_pos: str, new_pos: str):
+    user_id = str(interaction.user.id)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            async with db.execute('''
+                SELECT card_id FROM lineup WHERE user_id = ? AND position = ?
+            ''', (user_id, current_pos)) as cursor:
+                result = await cursor.fetchone()
+
+            if not result:
+                await interaction.response.send_message(f"No player found at position '{current_pos}'.")
+                return
+
+            card_id = result[0]
+
+            async with db.execute('''
+                SELECT 1 FROM lineup WHERE user_id = ? AND position = ?
+            ''', (user_id, new_pos)) as cursor:
+                if await cursor.fetchone():
+                    await interaction.response.send_message(f"Position '{new_pos}' is already occupied.")
+                    return
+
+            async with db.execute('''
+                UPDATE lineup SET position = ? WHERE user_id = ? AND card_id = ?
+            ''', (new_pos, user_id, card_id)):
+                await db.commit()
+
+            await interaction.response.send_message(f"Player's position changed from '{current_pos}' to '{new_pos}'.")
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}")
